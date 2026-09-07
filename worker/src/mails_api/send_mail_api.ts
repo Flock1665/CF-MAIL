@@ -1,5 +1,5 @@
 import { Context, Hono } from 'hono'
-import { Jwt } from 'hono/utils/jwt'
+import { verifyAddressToken } from '../address_auth';
 import { createMimeMessage } from 'mimetext';
 import { Resend } from 'resend';
 import { WorkerMailer, WorkerMailerOptions } from 'worker-mailer';
@@ -261,15 +261,14 @@ api.post('/api/send_mail', async (c) => {
 })
 
 api.post('/external/api/send_mail', async (c) => {
-    const msgs = i18n.getMessagesbyContext(c);
-    const { token } = await c.req.json();
+    const reqJson = await c.req.json();
+    const payload = await verifyAddressToken(c, reqJson?.token).catch(() => null);
+    if (!payload) {
+        return c.text(i18n.getMessagesbyContext(c).InvalidAddressCredentialMsg, 401);
+    }
     try {
-        const { address } = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
-        if (!address) {
-            return c.text(msgs.AddressNotFoundMsg, 400)
-        }
-        const reqJson = await c.req.json();
-        await sendMail(c, address as string, reqJson);
+        const { from_name, to_mail, to_name, subject, content, is_html } = reqJson;
+        await sendMail(c, payload.address, { from_name, to_mail, to_name, subject, content, is_html });
         return c.json({ status: "ok" })
     } catch (e) {
         console.error("Failed to send mail", e);

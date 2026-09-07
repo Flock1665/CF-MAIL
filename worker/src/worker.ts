@@ -1,7 +1,7 @@
 import { Context, Hono } from 'hono'
 import { cors } from 'hono/cors';
-import { jwt } from 'hono/jwt'
 import { Jwt } from 'hono/utils/jwt'
+import { addressJwtAuth } from './address_auth';
 
 import { api as commonApi } from './commom_api';
 import { api as openAuthApi } from './open_api/auth';
@@ -171,7 +171,7 @@ app.use('/api/*', async (c, next) => {
 	}
 
 	try {
-		return await jwt({ secret: c.env.JWT_SECRET, alg: "HS256" })(c, next);
+		return await addressJwtAuth(c, next);
 	} catch (e) {
 		console.warn(e);
 		const lang = c.get("lang") || c.env.DEFAULT_LANG;
@@ -221,7 +221,7 @@ app.use('/user_api/*', async (c, next) => {
 	if (c.req.path.startsWith('/user_api/bind_address')
 		&& c.req.method === 'POST'
 	) {
-		return jwt({ secret: c.env.JWT_SECRET, alg: "HS256" })(c, next);
+		return addressJwtAuth(c, next);
 	}
 	await next();
 });

@@ -15,6 +15,7 @@ USER_ROLES = [
   { domains = [], role = "empty-role", prefix = "EMPTY" },
 ]
 JWT_SECRET = "e2e-test-secret-key"
+TELEGRAM_BOT_TOKEN = "e2e-telegram-test-token"
 BLACK_LIST = ""
 ENABLE_USER_CREATE_EMAIL = true
 ENABLE_USER_DELETE_EMAIL = true

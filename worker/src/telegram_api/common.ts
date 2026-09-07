@@ -1,9 +1,11 @@
 import { Context } from "hono";
 import { Jwt } from "hono/utils/jwt";
+import { verifyAddressToken } from '../address_auth';
 import { CONSTANTS } from "../constants";
 import { getBooleanValue, getIntValue, getJsonSetting } from "../utils";
 import { deleteAddressWithData, newAddress, generateRandomName } from "../common";
 import { LocaleMessages } from "../i18n/type";
+import i18n from '../i18n';
 
 export const tgUserNewAddress = async (
     c: Context<HonoCustomType>, userId: string, address: string,
@@ -63,17 +65,9 @@ export const jwtListToAddressData = async (
     const invalidJwtList = [] as string[];
     for (const jwt of jwtList) {
         try {
-            const { address, address_id } = await Jwt.verify(jwt, c.env.JWT_SECRET, "HS256");
-            const name = await c.env.DB.prepare(
-                `SELECT name FROM address WHERE id = ? `
-            ).bind(address_id).first("name");
-            if (!name) {
-                addressList.push(msgs.TgInvalidAddressMsg);
-                invalidJwtList.push(jwt);
-                continue;
-            }
-            addressList.push(address as string);
-            addressIdMap[address as string] = address_id as number;
+            const { address, address_id } = await verifyAddressToken(c, jwt);
+            addressList.push(address);
+            addressIdMap[address] = address_id;
         } catch (e) {
             addressList.push(msgs.TgInvalidCredentialMsg);
             invalidJwtList.push(jwt);
@@ -87,13 +81,11 @@ export const bindTelegramAddress = async (
     c: Context<HonoCustomType>, userId: string, jwt: string,
     msgs: LocaleMessages
 ): Promise<string> => {
-    const { address } = await Jwt.verify(jwt, c.env.JWT_SECRET, "HS256");
-    if (!address) {
-        throw Error(msgs.TgInvalidCredentialMsg);
-    }
+    const { address } = await verifyAddressToken(c, jwt);
     const jwtList = await c.env.KV.get<string[]>(`${CONSTANTS.TG_KV_PREFIX}:${userId}`, 'json') || [];
     const { addressIdMap } = await jwtListToAddressData(c, jwtList, msgs);
     if (address as string in addressIdMap) {
+        await c.env.KV.put(`${CONSTANTS.TG_KV_PREFIX}:${address}`, userId.toString());
         return address as string;
     }
     if (jwtList.length >= getIntValue(c.env.TG_MAX_ADDRESS, 5)) {
@@ -105,10 +97,9 @@ export const bindTelegramAddress = async (
     return address as string;
 }
 
-export const unbindTelegramAddress = async (
-    c: Context<HonoCustomType>, userId: string, address: string
+const removeTelegramBinding = async (
+    c: Context<HonoCustomType>, userId: string, address: string, jwtList: string[]
 ): Promise<boolean> => {
-    const jwtList = await c.env.KV.get<string[]>(`${CONSTANTS.TG_KV_PREFIX}:${userId}`, 'json') || [];
     const newJwtList = [];
     for (const jwt of jwtList) {
         try {
@@ -122,8 +113,19 @@ export const unbindTelegramAddress = async (
         newJwtList.push(jwt);
     }
     await c.env.KV.put(`${CONSTANTS.TG_KV_PREFIX}:${userId}`, JSON.stringify(newJwtList));
-    await c.env.KV.delete(`${CONSTANTS.TG_KV_PREFIX}:${address}`);
+    const owner = await c.env.KV.get<string>(`${CONSTANTS.TG_KV_PREFIX}:${address}`);
+    if (owner === userId) await c.env.KV.delete(`${CONSTANTS.TG_KV_PREFIX}:${address}`);
     return true;
+}
+
+export const unbindTelegramAddress = async (
+    c: Context<HonoCustomType>, userId: string, address: string
+): Promise<boolean> => {
+    const msgs = i18n.getMessagesbyContext(c);
+    const jwtList = await c.env.KV.get<string[]>(`${CONSTANTS.TG_KV_PREFIX}:${userId}`, 'json') || [];
+    const { addressIdMap } = await jwtListToAddressData(c, jwtList, msgs);
+    if (!Object.hasOwn(addressIdMap, address)) throw Error(msgs.TgAddressNotYoursMsg);
+    return await removeTelegramBinding(c, userId, address, jwtList);
 }
 
 export const unbindTelegramByAddress = async (
@@ -132,7 +134,8 @@ export const unbindTelegramByAddress = async (
     if (!c.env.KV) return true;
     const userId = await c.env.KV.get<string>(`${CONSTANTS.TG_KV_PREFIX}:${address}`)
     if (userId) {
-        return await unbindTelegramAddress(c, userId, address);
+        const jwtList = await c.env.KV.get<string[]>(`${CONSTANTS.TG_KV_PREFIX}:${userId}`, 'json') || [];
+        return await removeTelegramBinding(c, userId, address, jwtList);
     }
     return true;
 }
