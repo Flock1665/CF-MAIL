@@ -7,6 +7,7 @@ import { getFingerprint } from '../utils/fingerprint'
 import { safeBearerHeader, safeHeaderValue } from '../utils/headers'
 import { sanitizeHtml } from '../utils/sanitize-html'
 import { APP_CONFIG } from '../config'
+import { isUserAccessTokenError, interceptUserAccessTokenResponse } from './user-access-token'
 
 const API_BASE = APP_CONFIG.API_BASE || "";
 const {
@@ -21,7 +22,7 @@ const instance = axios.create({
     validateStatus: (status) => status >= 200 && status <= 500
 });
 
-const apiFetch = async (path, options = {}) => {
+const apiFetch = async (path, options = {}, interceptResponse = interceptUserAccessTokenResponse) => {
     const showLoading = options.showLoading !== false;
     if (showLoading) loading.value = true;
     try {
@@ -47,25 +48,25 @@ const apiFetch = async (path, options = {}) => {
         const authorizationHeader = safeBearerHeader(jwt.value);
         if (authorizationHeader) headers['Authorization'] = authorizationHeader;
 
-        const response = await instance.request(path, {
+        const response = await interceptResponse(await instance.request(path, {
             method: options.method || 'GET',
             data: options.body || null,
             headers,
-        });
-        if (response.status === 401 && path.startsWith("/admin")) {
+        }), instance);
+        if (response.status === 401 && path.startsWith("/admin") && !isUserAccessTokenError(response)) {
             showAdminAuth.value = true;
         }
-        if (response.status === 401 && openSettings.value.needAuth) {
+        if (response.status === 401 && openSettings.value.needAuth && !isUserAccessTokenError(response)) {
             showAuth.value = true;
         }
         if (response.status >= 300) {
-            throw new Error(`[${response.status}]: ${response.data}` || "error");
+            throw new Error(`[${response.status}]: ${response.data?.message || response.data}`);
         }
         const data = response.data;
         return data;
     } catch (error) {
         if (error.response) {
-            throw new Error(`Code ${error.response.status}: ${error.response.data}` || "error");
+            throw new Error(`Code ${error.response.status}: ${error.response.data?.message || error.response.data}`);
         }
         throw error;
     } finally {
